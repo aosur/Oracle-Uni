@@ -1,0 +1,325 @@
+-----------------------------------------------------------------------------------
+-- PROGRAMAR UN PAQUETE DE UN CRUD
+-----------------------------------------------------------------------------------
+create or replace package topitop.pk_crud_producto as
+
+	function generacodigo(palabra in varchar2, n in number, a in number) return char;
+	
+	procedure usp_inserta_producto(p_desc in varchar2, p_idlinea in number,
+			p_compra in number, p_venta in number, p_stock in number) ;
+			
+	procedure usp_elimina_producto(p_codigo in varchar2);
+	
+	procedure usp_actualiza_producto(p_codigo in varchar2, p_descripcion in varchar2, 		
+			p_linea in number, p_compra in number, p_venta in number, p_stock in number);
+			
+	procedure usp_busca_por_nombre(p_nombre in varchar2);
+				
+end pk_crud_producto;
+/
+
+
+create or replace package body topitop.pk_crud_producto as
+	
+	--Generador de codigo alfanumerico
+	/*--Aumenta ceros a una palabra hasta alcanzar una longitud n con 
+	ultima(s) cifra(s) cifra a (en la longitud está incluída a)*/
+	function generacodigo(
+		palabra in varchar2, 
+		n in number, 
+		a in number
+	)return char
+   
+	as
+   longitud number:=length(palabra);
+   longitud2 number:=length(a);
+   almacenador varchar2(10):=palabra;
+   codigo varchar2(10);
+	begin
+   for i in 1..(n-longitud-longitud2) loop
+      almacenador:=almacenador||'0';
+   end loop;
+   codigo:=almacenador||a;
+   return to_char(codigo);
+	END;
+	
+	
+	--inserta producto
+	procedure usp_inserta_producto( 
+		p_desc in varchar2, 
+		p_idlinea in number,
+		p_compra in number, 
+		p_venta in number, 
+		p_stock in number
+	) 
+	is
+		v_cod varchar2(20);
+		v_cont number;
+	begin
+		select valor 
+		into v_cont
+		from topitop.control
+		where parametro = 'Productos';
+		v_cod := topitop.pk_crud_producto.generacodigo('A', 5, v_cont);
+		--actualiza tabla control
+		update topitop.control set valor = valor + 1 
+		where parametro = 'Productos';
+		--inserta producto
+		insert into topitop.productos
+		values(v_cod, p_desc, p_idlinea, p_compra, p_venta, p_stock);
+		commit;
+		dbms_output.put_line('Proceso ok');
+	end;
+	
+	--Elimina producto
+	procedure usp_elimina_producto(
+		p_codigo in varchar2
+	)
+	is
+	begin
+		delete from topitop.productos
+		where idproducto = p_codigo;
+		commit;
+	end;
+	
+	--Actualiza producto
+	procedure usp_actualiza_producto(
+		p_codigo in varchar2, 
+		p_descripcion in varchar2, 		
+		p_linea in number, 
+		p_compra in number, 
+		p_venta in number, 
+		p_stock in number)
+	is
+	begin
+		update topitop.productos 
+		set descripcion = p_descripcion, idlinea = p_linea, 
+		preciocompra = p_compra, precioventa = p_venta, 
+		stock = p_stock
+		where idproducto = p_codigo;
+		commit;
+	end;
+	
+	--Busca productos parecidos al ingresado por parametro
+	procedure usp_busca_por_nombre(
+		p_nombre in varchar2)
+	is
+		--definiendo tipo
+		type Array_Productos is table of topitop.productos%rowtype 
+		index by binary_integer;
+		--declarando variable
+		v_nombres Array_Productos;
+	begin
+		for r in (select * from topitop.productos where upper(descripcion)
+				like upper('%' || p_nombre || '%')) loop
+				v_nombres(v_nombres.count + 1) := r;
+		end loop;
+		for n in v_nombres.first..v_nombres.last loop
+			dbms_output.put_line(n ||'.- ' || v_nombres(n).descripcion);
+		end loop;
+	end;
+			
+END pk_crud_producto;
+/
+-----------------------------------------------------------------------------
+--TRANSACCIONES	
+-----------------------------------------------------------------------------
+call topitop.pk_crud_producto.usp_inserta_producto('Zapatillas Pegasus',
+		4, 780.50, 850.50, 25);
+-----------------------------------------------------------------------------	
+select * 
+from topitop.productos 
+order by idproducto;
+-----------------------------------------------------------------------------
+call topitop.pk_crud_producto.usp_elimina_producto('A0025');
+
+-----------------------------------------------------------------------------
+call topitop.pk_crud_producto.usp_actualiza_producto('A0025',
+'Zapatillas Pegasus 35 NIKE', 3, 750.5, 850.5, 87);
+-----------------------------------------------------------------------------
+call topitop.pk_crud_producto.usp_busca_por_nombre('be');
+-----------------------------------------------------------------------------
+
+-----------------------------------------------------------------------------
+-- CONSULTA DE RESUMEN DE DATOS 
+--(2 consultas complejas de varias tablas con SP y Tablas Temporales)
+-----------------------------------------------------------------------------
+/*Desarrolle un SP que muestre el nombre de la línea, codigo y el precio de
+venta de todos sus productos.*/
+
+drop table topitop.resumen;
+
+create global temporary table topitop.resumen(
+	p_codigo number primary key,
+	p_nombre varchar2(20),
+	p_total number(10, 2)
+)on commit preserve rows;
+
+create or replace procedure topitop.mostrar_resumen
+is
+	v_total number(8, 2);
+begin
+	--limpia tabla
+	delete topitop.resumen;
+	--carga inicial de datos
+	insert into topitop.resumen(p_codigo, p_nombre)
+	select idlinea, nombre
+	from topitop.lineas;
+	--carga de total
+	for r in (select * from topitop.resumen) loop
+	
+		select sum(precioventa) into v_total
+		from topitop.productos
+		where idlinea = r.p_codigo;
+		
+		update topitop.resumen
+		set p_total = nvl(v_total,0)
+		where p_codigo = r.p_codigo;
+		
+	end loop;
+	commit;
+end;
+/
+
+call topitop.mostrar_resumen();
+
+select * from topitop.resumen;
+
+/* Muestre la cantidad de ventas de cada empleado, asi como
+el total de ventas realizado*/
+
+drop table topitop.resumen_empleados;
+
+create global temporary table topitop.resumen_empleados(
+	p_codigo varchar2(10) primary key,
+	p_nombre varchar2(30),
+	p_apellidos varchar2(30),
+	p_nro_ventas number,
+	p_total_ventas number(10, 2)
+)on commit preserve rows;
+
+create or replace procedure topitop.mostrar_resumen_empleados
+is
+	v_nro_ventas number;
+	v_total_ventas number(10, 2);
+begin
+	--limpiar tabla
+	delete from topitop.resumen_empleados;
+	--carga inicial de datos 
+	insert into topitop.resumen_empleados(p_codigo, p_nombre, p_apellidos)
+	select idempleado, nombre, apellidos
+	from topitop.empleados;
+	--calcular v_nro_ventas, v_total_ventas
+	for r in (select * from topitop.resumen_empleados) loop
+		select count(idventa), sum(total) 
+		into v_nro_ventas, v_total_ventas
+		from topitop.ventas
+		where idempleado = r.p_codigo;
+		
+		update topitop.resumen_empleados
+		set p_nro_ventas = nvl(v_nro_ventas,0),
+			p_total_ventas = nvl(v_total_ventas,0)
+		where p_codigo = r.p_codigo;
+	
+	end loop;
+	commit;
+end;
+/
+
+call topitop.mostrar_resumen_empleados();
+
+select * from topitop.resumen_empleados;
+
+------------------------------------------------------------------------
+ -- Proceso complejo. Transacción para procesar varias filas.
+ -- Ejemplo: factura con varios items, esquema: VENTAS.
+------------------------------------------------------------------------
+create or replace package topitop.pkg_egcc_util is
+
+
+type t_array_string is table of varchar2(1000)index by binary_integer;
+
+
+function split(p_data varchar2, p_delimitador varchar2 ) 
+return t_array_string;
+ 
+end;
+/
+
+
+
+create or replace package body topitop.pkg_egcc_util is
+
+function split(p_data varchar2, p_delimitador varchar2 ) return t_array_string
+is
+    i        number   := 0;
+    pos      number   := 0;
+    v_data   clob     := p_data;
+    strings  t_array_string;
+begin
+  v_data := trim( v_data );
+  pos := instr( v_data, p_delimitador, 1, 1 );
+  while ( pos != 0) loop
+      i := i + 1;
+      strings(i) := substr( v_data, 1, pos - 1 );
+      v_data :=  substr( v_data, pos + 1, length(v_data) );
+      pos := instr(v_data, p_delimitador, 1, 1);
+      if pos = 0 then
+          strings( i + 1 ) := v_data;
+      end if;    
+  end loop;
+  if i = 0 and length( v_data ) > 0 then
+    strings( i + 1 ) := v_data;
+  end if;
+  return strings;
+end split;
+
+
+END;
+/
+
+
+
+create or replace procedure topitop.sp_inserta_clientes
+( p_datos in varchar2, p_estado out varchar2 )
+as
+  v_registros topitop.pkg_egcc_util.t_array_string;
+  v_campos    topitop.pkg_egcc_util.t_array_string;
+begin
+  p_estado := 'ok';
+  v_registros := topitop.pkg_egcc_util.split(p_datos,'¬');
+  
+  for i in 1 .. v_registros.count loop 
+
+    v_campos := topitop.pkg_egcc_util.split(v_registros(i),'|');
+
+    insert into topitop.clientes(idcliente, nombre, direccion, rucdni, telefono) 
+    values(v_campos(1), v_campos(2), v_campos(3), v_campos(4), v_campos(5));
+
+	end loop;    
+  commit;
+    
+exception
+    when others then
+        p_estado := sqlerrm;
+        rollback;
+end;
+/
+
+select * from topitop.clientes;
+
+
+declare
+  v_data   varchar2(10000);
+  v_estado varchar2(500);
+begin
+  -- data
+  v_data := 'C0021|Juan Perez|av las palmeras 456-Los Olivos|10421042585|991298945¬C0022|Luis Angel|Calle veracidad sn San Isidro|10524156898|996895565¬C0023|Maria Jose|Ovalo Guitierrez 235 - Miraflores|10451084569|956968577';
+  -- proceso
+	topitop.sp_inserta_clientes(v_data, v_estado);
+  -- reporte
+  dbms_output.put_line(v_estado);
+end;
+/
+
+
